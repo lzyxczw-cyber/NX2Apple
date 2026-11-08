@@ -1,0 +1,455 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lzyxczw-cyber <lzyxczw@163.com>
+Date: Sun, 8 Nov 2026 22:17:43 +0800
+Subject: [PATCH] ios launcher: the settings screen and the in-game menu are
+ translated, English keys in zh-Hans and zh-Hant
+
+The iPhone app's own screens carried their English text as literals, and a player whose device is Chinese got an English settings screen and in-game menu over a Chinese game (Rhythm Heaven Groove on an iPhone 18 Pro, iOS 27). The two screens now keep those literals as keys and look them up in Sources/zh-Hans.lproj/Localizable.strings and Sources/zh-Hant.lproj/Localizable.strings, which dm/ios/project.yml declares as the app's localizations (CFBundleLocalizations, development region en); a key without a translation stays English, and the Mac app's settings window, which has no strings resources, is unchanged.
+
+The settings' labels, notes and option names come from dm/launcher.json in English (dm/games/settings.tsv); the row draws them through the same lookup, so the file stays language-neutral and a front end that draws its own list still reads English. The same holds for the in-game menu's rows (GameMenu.swift) and the section headings.
+
+Checked with the iPhone app built from this commit (build_ipa_from_nsp.py --platform ios, Xcode 27.2, Metal toolchain 27B47) and installed on an iPhone 18 Pro (iOS 27, device language Chinese): the settings screen and the in-game menu are Chinese (screenshots in the PR), a start with DM_LAUNCHER=0 still runs Rhythm Heaven Groove at 60 fps with 0 dropped frames over 900 frames and no [RED] line, and the game itself is untouched. dm/ios/tests/test_launcher_storage.py passes. dm/tools/tests/test_nsp_mac_app.py has one failure at this pin (test_shader_watch_counts_the_list: ShaderWatch.__init__ takes 2 positional arguments), which is there without this change. The Traditional Chinese file is a best-effort translation and wants a native review.
+
+Upstream-Status: fork-only
+Reason: The iPhone launcher and in-game menu are English-only; this fork carries zh-Hans and zh-Hant strings until upstream has a localization mechanism.
+Issue: LNPANDY/NX2Apple#418
+
+---
+ dm/ios/Sources/GameMenu.swift                 | 14 +--
+ dm/ios/Sources/Launcher.swift                 | 30 +++----
+ dm/ios/Sources/LauncherRow.swift              | 10 +--
+ dm/ios/Sources/LauncherSettings.swift         |  9 +-
+ .../Sources/zh-Hans.lproj/Localizable.strings | 88 +++++++++++++++++++
+ .../Sources/zh-Hant.lproj/Localizable.strings | 88 +++++++++++++++++++
+ dm/ios/project.yml                            |  2 +
+ docs/frontends.md                             |  2 +
+ 8 files changed, 215 insertions(+), 28 deletions(-)
+ create mode 100644 dm/ios/Sources/zh-Hans.lproj/Localizable.strings
+ create mode 100644 dm/ios/Sources/zh-Hant.lproj/Localizable.strings
+
+diff --git a/dm/ios/Sources/GameMenu.swift b/dm/ios/Sources/GameMenu.swift
+index f91b002..b4c7a2a 100644
+--- a/dm/ios/Sources/GameMenu.swift
++++ b/dm/ios/Sources/GameMenu.swift
+@@ -8,17 +8,17 @@ var gameMenuModel: LauncherModel?   // the settings screen's model (Launcher.swi
+ 
+ @_cdecl("dm_game_menu")
+ public func dmGameMenu() -> UnsafeMutableRawPointer {
+-    let title = gameMenuModel != nil ? "More settings on the start screen" : ""
++    let title = gameMenuModel != nil ? L("More settings on the start screen") : ""
+     let menu = UIMenu(title: title, children: [UIDeferredMenuElement.uncached { done in done(gameMenuItems()) }])   // built each time it opens, so it shows the current choices
+     return Unmanaged.passRetained(menu).toOpaque()
+ }
+ 
+ private func gameMenuItems() -> [UIMenuElement] {
+-    let names = ["2D", "3D", "Tap"]
++    let names = [L("2D"), L("3D"), L("Tap")]
+     let layouts = (0..<3).filter { dm_pad_layout_offered(Int32($0)) }.map { l in
+         UIAction(title: names[l], state: dm_pad_layout() == l ? .on : .off) { _ in dm_pad_layout_set(Int32(l)) }
+     }
+-    let layout = UIMenu(title: "Controller layout", options: .singleSelection, children: layouts)   // a choice's value shows in its submenu: a subtitle would make each row two lines
++    let layout = UIMenu(title: L("Controller layout"), options: .singleSelection, children: layouts)   // a choice's value shows in its submenu: a subtitle would make each row two lines
+     var items: [UIMenuElement] = []
+     var placed = false
+     if let m = gameMenuModel {
+@@ -39,12 +39,12 @@ private func gameMenuRow(_ m: LauncherModel, _ s: Setting) -> UIMenuElement {
+     let attributes: UIMenuElement.Attributes = fixed ? .disabled : []
+     func pick(_ v: String) { m.choose(s, v); _ = dm_setting_live(s.env, v) }
+     if s.kind == "toggle" {
+-        let a = UIAction(title: s.label, attributes: attributes, state: now == s.onValue ? .on : .off) { _ in pick(now == s.onValue ? s.offValue : s.onValue) }
+-        if fixed { a.subtitle = "Set in env.txt" }
++        let a = UIAction(title: L(s.label), attributes: attributes, state: now == s.onValue ? .on : .off) { _ in pick(now == s.onValue ? s.offValue : s.onValue) }
++        if fixed { a.subtitle = L("Set in env.txt") }
+         return a
+     }
+     let options = s.options ?? []
+     let current = options.first { $0[0] == now }?[1] ?? now
+-    let actions = options.map { o in UIAction(title: o[1], attributes: attributes, state: o[0] == now ? .on : .off) { _ in pick(o[0]) } }
+-    return UIMenu(title: s.label, subtitle: fixed ? "\(current), set in env.txt" : nil, options: .singleSelection, children: actions)
++    let actions = options.map { o in UIAction(title: L(o[1]), attributes: attributes, state: o[0] == now ? .on : .off) { _ in pick(o[0]) } }
++    return UIMenu(title: L(s.label), subtitle: fixed ? String(format: L("%@, set in env.txt"), current) : nil, options: .singleSelection, children: actions)
+ }
+diff --git a/dm/ios/Sources/Launcher.swift b/dm/ios/Sources/Launcher.swift
+index 011a893..d150460 100644
+--- a/dm/ios/Sources/Launcher.swift
++++ b/dm/ios/Sources/Launcher.swift
+@@ -80,32 +80,32 @@ private struct CloudSavesSection: View {
+     var body: some View {
+         Section {
+             HStack {
+-                Text("Cloud saves")
++                Text(L("Cloud saves"))
+                 Spacer()
+-                Text(folder.isEmpty ? "Off" : (folder as NSString).lastPathComponent)
++                Text(folder.isEmpty ? L("Off") : (folder as NSString).lastPathComponent)
+                     .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+             }
+-            Button(folder.isEmpty ? "Choose a folder in iCloud Drive…" : "Choose a different folder…") { picking = true }
++            Button(folder.isEmpty ? L("Choose a folder in iCloud Drive…") : L("Choose a different folder…")) { picking = true }
+                 // The sheet sits on the button, not on the Section: SwiftUI hands a Section's modifiers to every row, so one tap presented a picker per row and they invalidated each other (LNPANDY/NX2Apple#315).
+                 .sheet(isPresented: $picking) {
+                     DocumentPicker(types: [.folder]) { url in
+                         picking = false
+                         if dm_store_cloud_saves(url) {
+-                            note = "Saved. The game uses this folder when you press Play."
++                            note = L("Saved. The game uses this folder when you press Play.")
+                             refresh()
+                         } else {
+-                            note = "That folder could not be remembered — try a different one."
++                            note = L("That folder could not be remembered — try a different one.")
+                         }
+                     } onCancel: { picking = false }
+                 }
+             if !folder.isEmpty {
+-                Button("Turn off cloud saves", role: .destructive) {
++                Button(L("Turn off cloud saves"), role: .destructive) {
+                     dm_clear_cloud_saves(); refresh(); note = ""
+                 }
+             }
+         } footer: {
+             Text(note.isEmpty
+-                 ? "Choose a folder in iCloud Drive, and the same one in the Mac app's Cloud saves. The save comes in when the game starts and goes out after each save; a save that is replaced is kept in save-backups."
++                 ? L("Choose a folder in iCloud Drive, and the same one in the Mac app's Cloud saves. The save comes in when the game starts and goes out after each save; a save that is replaced is kept in save-backups.")
+                  : note)
+         }
+         .onAppear(perform: refresh)
+@@ -115,7 +115,7 @@ private struct CloudSavesSection: View {
+         var stale: ObjCBool = false
+         folder = dm_cloud_saves_path(&stale) ?? ""
+         if stale.boolValue && folder.isEmpty {
+-            note = "The folder you chose before is no longer readable (the app was signed differently). Please choose it again."
++            note = L("The folder you chose before is no longer readable (the app was signed differently). Please choose it again.")
+         }
+     }
+ }
+@@ -165,9 +165,9 @@ private struct LauncherView: View {
+                             .clipShape(RoundedRectangle(cornerRadius: 22))
+                             .accessibilityHidden(true)
+                     }
+-                    Text((info("CFBundleDisplayName") as? String) ?? "Game")
++                    Text((info("CFBundleDisplayName") as? String) ?? L("Game"))
+                         .font(.title.weight(.bold)).multilineTextAlignment(.center)
+-                    Text("Version \((info("CFBundleShortVersionString") as? String) ?? "")")
++                    Text(String(format: L("Version %@"), (info("CFBundleShortVersionString") as? String) ?? ""))
+                         .font(.callout).foregroundStyle(.secondary)
+                     playButton
+                 }
+@@ -177,22 +177,22 @@ private struct LauncherView: View {
+                     ForEach(m.sections, id: \.self) { section in
+                         let rows = m.rows(in: section)
+                         if !rows.isEmpty {
+-                            Section(section) {
++                            Section(L(section)) {
+                                 ForEach(rows) { SettingRow(s: $0, m: m) }
+                             }
+                         }
+                     }
+                     Section {
+-                        Button("Reset to tested defaults") { m.reset() }
++                        Button(L("Reset to tested defaults")) { m.reset() }
+                             .disabled(!m.changed)
+                     } footer: {
+-                        Text("Brings back all settings this game was tested with.")
++                        Text(L("Brings back all settings this game was tested with."))
+                     }
+                     GameDataSection()
+                     CloudSavesSection()
+                     Section {
+                         HStack {
+-                            Text("Memory available")
++                            Text(L("Memory available"))
+                             Spacer()
+                             Text(ByteCountFormatter.string(fromByteCount: Int64(memory), countStyle: .memory)).monospacedDigit().foregroundStyle(.secondary)
+                         }
+@@ -213,7 +213,7 @@ private struct LauncherView: View {
+     }
+ 
+     @ViewBuilder var playButton: some View {
+-        let button = Button(action: play) { Text("Play").font(.title3.weight(.semibold)).frame(maxWidth: 220) }.controlSize(.large)
++        let button = Button(action: play) { Text(L("Play")).font(.title3.weight(.semibold)).frame(maxWidth: 220) }.controlSize(.large)
+         if #available(iOS 26.0, *) { button.buttonStyle(.glassProminent) } else { button.buttonStyle(.borderedProminent) }
+     }
+ 
+diff --git a/dm/ios/Sources/LauncherRow.swift b/dm/ios/Sources/LauncherRow.swift
+index 82fa3b3..7db9b7c 100644
+--- a/dm/ios/Sources/LauncherRow.swift
++++ b/dm/ios/Sources/LauncherRow.swift
+@@ -12,8 +12,8 @@ struct SettingRow: View {
+ 
+     private var locked: Bool { m.fixed.contains(s.env) }
+     private var note: String {
+-        guard locked else { return s.note }
+-        return (s.note.isEmpty ? "" : s.note + " · ") + (m.fromLaunch.contains(s.env) ? "Set at launch" : "Set by an env file")
++        guard locked else { return L(s.note) }
++        return (s.note.isEmpty ? "" : L(s.note) + " · ") + L(m.fromLaunch.contains(s.env) ? "Set at launch" : "Set by an env file")
+     }
+     private var rangeValue: Binding<Double> {
+         Binding(get: { Double(m.values[s.env] ?? s.def) ?? s.max ?? 1 },
+@@ -23,7 +23,7 @@ struct SettingRow: View {
+ 
+     private var settingLabel: some View {
+         VStack(alignment: .leading, spacing: 4) {
+-            Text(s.label)
++            Text(L(s.label))
+             if !note.isEmpty { Text(note).font(.footnote).foregroundStyle(.secondary) }
+         }
+     }
+@@ -33,7 +33,7 @@ struct SettingRow: View {
+             switch s.kind {
+             case "choice":
+                 Picker(selection: m.binding(s)) {
+-                    ForEach(s.options ?? [], id: \.[0]) { Text($0[1]).tag($0[0]) }
++                    ForEach(s.options ?? [], id: \.[0]) { Text(L($0[1])).tag($0[0]) }
+                 } label: {
+                     settingLabel
+                 }
+@@ -46,7 +46,7 @@ struct SettingRow: View {
+                         Text(percentage).monospacedDigit().foregroundStyle(.secondary)
+                     }
+                     Slider(value: rangeValue, in: (s.min ?? 0)...(s.max ?? 1), step: s.step ?? 0.05)
+-                        .accessibilityLabel(s.label)
++                        .accessibilityLabel(L(s.label))
+                         .accessibilityValue(percentage)
+                 }
+             default:
+diff --git a/dm/ios/Sources/LauncherSettings.swift b/dm/ios/Sources/LauncherSettings.swift
+index aec4414..cc25a37 100644
+--- a/dm/ios/Sources/LauncherSettings.swift
++++ b/dm/ios/Sources/LauncherSettings.swift
+@@ -2,6 +2,13 @@
+ import Foundation
+ import Combine
+ 
++/// Localised text for a UI key. The English literal is the key; a `Localizable.strings` in the language's
++/// `.lproj` (the iOS app ships zh-Hans and zh-Hant) translates it. A key without a translation, and the Mac
++/// app, which has no such resources, keep the English text.
++func L(_ key: String) -> String {
++    NSLocalizedString(key, tableName: nil, bundle: .main, value: key, comment: "")
++}
++
+ struct Setting: Decodable, Identifiable {
+     let env, kind, label, note, def: String
+     let section: String?   // heading on the settings screen; absent in older bundles
+@@ -13,7 +20,7 @@ struct Setting: Decodable, Identifiable {
+     let min, max, step: Double?   // range
+     let on, off: String?   // toggle: the values the variable takes (1 / 0 when not given)
+     var id: String { env }
+-    var sectionTitle: String { section ?? "Game" }
++    var sectionTitle: String { section ?? L("Game") }
+     var basic: Bool { level == "basic" }
+     var onValue: String { on ?? "1" }
+     var offValue: String { off ?? "0" }
+diff --git a/dm/ios/Sources/zh-Hans.lproj/Localizable.strings b/dm/ios/Sources/zh-Hans.lproj/Localizable.strings
+new file mode 100644
+index 0000000..5547bd9
+--- /dev/null
++++ b/dm/ios/Sources/zh-Hans.lproj/Localizable.strings
+@@ -0,0 +1,88 @@
++/* Simplified Chinese for the iOS launcher and the in-game settings menu. The English literals are the keys. */
++"%@, set in env.txt" = "%@，在 env.txt 中设置";
++"120 fps" = "120 帧";
++"16:9 (Switch)" = "16:9（Switch）";
++"2D" = "2D";
++"30 fps" = "30 帧";
++"3D" = "3D";
++"60 fps" = "60 帧";
++"Adjusts resolution between 70% and 100% under load. Turn off to keep full resolution for the selected console mode." = "在高负载时把分辨率在 70% 到 100% 之间调整。关闭后按所选运行模式保持满分辨率。";
++"American English" = "美式英语";
++"Brazilian Portuguese" = "巴西葡萄牙语";
++"Brings back all settings this game was tested with." = "恢复此游戏测试时使用的全部设置。";
++"British English" = "英式英语";
++"Canadian French" = "加拿大法语";
++"Choose a different folder…" = "选择其他文件夹…";
++"Choose a folder in iCloud Drive, and the same one in the Mac app's Cloud saves. The save comes in when the game starts and goes out after each save; a save that is replaced is kept in save-backups." = "在 iCloud 云盘中选一个文件夹，并在 Mac 端 App 的「云存档」中选择同一个。开始游戏时会拉取存档，每次存档后写回；被替换的存档保存在 save-backups 中。";
++"Choose a folder in iCloud Drive…" = "选择 iCloud 云盘中的文件夹…";
++"Cloud saves" = "云存档";
++"Console mode" = "运行模式";
++"Controller layout" = "手柄布局";
++"Controls" = "操作";
++"Display mode" = "显示模式";
++"Docked" = "底座模式";
++"Dutch" = "荷兰语";
++"Dynamic resolution" = "动态分辨率";
++"Encode thread" = "编码线程";
++"Fill" = "填充";
++"Fill crops the game's 16:9 picture to cover the screen. Health bars, subtitles or maps near the edges can be cut off. A full-screen picture without cropping needs a patch for each game." = "「填充」会裁切游戏 16:9 画面以铺满屏幕，边缘的血条、字幕或地图可能被裁掉；要满屏不裁切需要为每个游戏打补丁。";
++"Fit" = "适应";
++"Frame buffering" = "帧缓冲";
++"Frame rate" = "帧率";
++"Frame-rate counter" = "帧率显示";
++"French" = "法语";
++"Fullscreen" = "全屏";
++"Game" = "游戏";
++"Game language" = "游戏语言";
++"Game rumble" = "游戏振动";
++"Game's own" = "游戏自带";
++"Game's upscaler" = "游戏自带缩放";
++"German" = "德语";
++"Handheld" = "掌机模式";
++"Hold frames when late" = "延迟时保持帧";
++"Italian" = "意大利语";
++"Japanese" = "日语";
++"Keeps a pipeline archive; uses more memory." = "保存管线归档；占用更多内存。";
++"Korean" = "韩语";
++"Latin American Spanish" = "拉美西班牙语";
++"Match screen" = "匹配屏幕";
++"Memory available" = "可用内存";
++"Metal 4 pipelines" = "Metal 4 管线";
++"MetalFX" = "MetalFX";
++"More settings on the start screen" = "更多设置在开始屏幕";
++"Off" = "关闭";
++"Performance" = "性能";
++"Performance HUD" = "性能 HUD";
++"Picture" = "画面";
++"Picture shape" = "画面比例";
++"Pipeline prebuild" = "管线预构建";
++"Play" = "开始游戏";
++"Portuguese" = "葡萄牙语";
++"Press a button to join" = "按键即可加入";
++"Render scale" = "渲染比例";
++"Renders about a quarter more pixels: a little slower and warmer." = "约多渲染四分之一的像素：稍慢、稍热。";
++"Reset to tested defaults" = "恢复测试默认值";
++"Rumble cutoff" = "振动起始点";
++"Rumble strength" = "振动强度";
++"Russian" = "俄语";
++"Saved. The game uses this folder when you press Play." = "已保存。按「开始游戏」后使用此文件夹。";
++"Set at launch" = "启动时设置";
++"Set by an env file" = "由 env 文件设置";
++"Set in env.txt" = "在 env.txt 中设置";
++"Simplified Chinese" = "简体中文";
++"Spanish" = "西班牙语";
++"Standard" = "标准";
++"Tap" = "触屏";
++"That folder could not be remembered — try a different one." = "无法记住该文件夹——请换一个试试。";
++"The first start waits a few minutes for it, once." = "首次启动会等待几分钟（仅一次）。";
++"The folder you chose before is no longer readable (the app was signed differently). Please choose it again." = "之前选择的文件夹已无法读取（App 签名已变化）。请重新选择。";
++"This game's files do not list its languages, so some of these may not be in the game. It may then show another one." = "此游戏文件未列出支持的语言，部分选项可能不在游戏中，届时会显示其他语言。";
++"Touch feedback" = "触感反馈";
++"Traditional Chinese" = "繁体中文";
++"Turn off cloud saves" = "关闭云存档";
++"Up to one frame more display latency." = "最多增加一帧显示延迟。";
++"Upscaling" = "画面缩放";
++"Uses more GPU time and can increase heat." = "占用更多 GPU 时间，可能增加发热。";
++"Version %@" = "版本 %@";
++"Window" = "窗口";
++"iPhone Duo screen (1.43:1)" = "iPhone Duo 屏幕（1.43:1）";
+diff --git a/dm/ios/Sources/zh-Hant.lproj/Localizable.strings b/dm/ios/Sources/zh-Hant.lproj/Localizable.strings
+new file mode 100644
+index 0000000..3877810
+--- /dev/null
++++ b/dm/ios/Sources/zh-Hant.lproj/Localizable.strings
+@@ -0,0 +1,88 @@
++/* Traditional Chinese for the iOS launcher and the in-game settings menu. The English literals are the keys. */
++"%@, set in env.txt" = "%@，在 env.txt 中設定";
++"120 fps" = "120 幀";
++"16:9 (Switch)" = "16:9（Switch）";
++"2D" = "2D";
++"30 fps" = "30 幀";
++"3D" = "3D";
++"60 fps" = "60 幀";
++"Adjusts resolution between 70% and 100% under load. Turn off to keep full resolution for the selected console mode." = "在高負載時把解析度在 70% 到 100% 之間調整。關閉後依所選執行模式維持完整解析度。";
++"American English" = "美式英文";
++"Brazilian Portuguese" = "巴西葡萄牙文";
++"Brings back all settings this game was tested with." = "恢復此遊戲測試時使用的全部設定。";
++"British English" = "英式英文";
++"Canadian French" = "加拿大法文";
++"Choose a different folder…" = "選擇其他資料夾…";
++"Choose a folder in iCloud Drive, and the same one in the Mac app's Cloud saves. The save comes in when the game starts and goes out after each save; a save that is replaced is kept in save-backups." = "在 iCloud 雲端硬碟中選一個資料夾，並在 Mac 端 App 的「雲端存檔」中選擇同一個。開始遊戲時會拉取存檔，每次存檔後寫回；被替換的存檔保存在 save-backups 中。";
++"Choose a folder in iCloud Drive…" = "選擇 iCloud 雲端硬碟中的資料夾…";
++"Cloud saves" = "雲端存檔";
++"Console mode" = "執行模式";
++"Controller layout" = "手把配置";
++"Controls" = "操作";
++"Display mode" = "顯示模式";
++"Docked" = "底座模式";
++"Dutch" = "荷蘭文";
++"Dynamic resolution" = "動態解析度";
++"Encode thread" = "編碼執行緒";
++"Fill" = "填滿";
++"Fill crops the game's 16:9 picture to cover the screen. Health bars, subtitles or maps near the edges can be cut off. A full-screen picture without cropping needs a patch for each game." = "「填滿」會裁切遊戲 16:9 畫面以鋪滿螢幕，邊緣的血條、字幕或地圖可能被裁掉；要滿螢幕不裁切需要為每個遊戲打補丁。";
++"Fit" = "適應";
++"Frame buffering" = "影格緩衝";
++"Frame rate" = "影格率";
++"Frame-rate counter" = "影格率顯示";
++"French" = "法文";
++"Fullscreen" = "全螢幕";
++"Game" = "遊戲";
++"Game language" = "遊戲語言";
++"Game rumble" = "遊戲震動";
++"Game's own" = "遊戲內建";
++"Game's upscaler" = "遊戲內建縮放";
++"German" = "德文";
++"Handheld" = "掌機模式";
++"Hold frames when late" = "延遲時保持影格";
++"Italian" = "義大利文";
++"Japanese" = "日文";
++"Keeps a pipeline archive; uses more memory." = "儲存管線封存；佔用更多記憶體。";
++"Korean" = "韓文";
++"Latin American Spanish" = "拉丁美洲西班牙文";
++"Match screen" = "符合螢幕";
++"Memory available" = "可用記憶體";
++"Metal 4 pipelines" = "Metal 4 管線";
++"MetalFX" = "MetalFX";
++"More settings on the start screen" = "更多設定在開始畫面";
++"Off" = "關閉";
++"Performance" = "效能";
++"Performance HUD" = "效能 HUD";
++"Picture" = "畫面";
++"Picture shape" = "畫面比例";
++"Pipeline prebuild" = "管線預建置";
++"Play" = "開始遊戲";
++"Portuguese" = "葡萄牙文";
++"Press a button to join" = "按鍵即可加入";
++"Render scale" = "渲染比例";
++"Renders about a quarter more pixels: a little slower and warmer." = "約多渲染四分之一的像素：稍慢、稍熱。";
++"Reset to tested defaults" = "恢復測試預設值";
++"Rumble cutoff" = "震動起始點";
++"Rumble strength" = "震動強度";
++"Russian" = "俄文";
++"Saved. The game uses this folder when you press Play." = "已儲存。按「開始遊戲」後使用此資料夾。";
++"Set at launch" = "啟動時設定";
++"Set by an env file" = "由 env 檔案設定";
++"Set in env.txt" = "在 env.txt 中設定";
++"Simplified Chinese" = "簡體中文";
++"Spanish" = "西班牙文";
++"Standard" = "標準";
++"Tap" = "觸控";
++"That folder could not be remembered — try a different one." = "無法記住該資料夾——請換一個試試。";
++"The first start waits a few minutes for it, once." = "首次啟動會等待幾分鐘（僅一次）。";
++"The folder you chose before is no longer readable (the app was signed differently). Please choose it again." = "之前選擇的資料夾已無法讀取（App 簽名已變更）。請重新選擇。";
++"This game's files do not list its languages, so some of these may not be in the game. It may then show another one." = "此遊戲檔案未列出支援的語言，部分選項可能不在遊戲中，屆時會顯示其他語言。";
++"Touch feedback" = "觸感回饋";
++"Traditional Chinese" = "繁體中文";
++"Turn off cloud saves" = "關閉雲端存檔";
++"Up to one frame more display latency." = "最多增加一個影格的顯示延遲。";
++"Upscaling" = "畫面縮放";
++"Uses more GPU time and can increase heat." = "佔用更多 GPU 時間，可能增加發熱。";
++"Version %@" = "版本 %@";
++"Window" = "視窗";
++"iPhone Duo screen (1.43:1)" = "iPhone Duo 螢幕（1.43:1）";
+diff --git a/dm/ios/project.yml b/dm/ios/project.yml
+index 8964dbb..6d4ea3e 100644
+--- a/dm/ios/project.yml
++++ b/dm/ios/project.yml
+@@ -30,6 +30,8 @@ targets:
+       path: Gen/Info.plist
+       properties:
+         CFBundleDisplayName: ${DM_DISPLAY_NAME}   # the game name in the base NSP (set by build_ipa.sh)
++        CFBundleLocalizations: [en, zh-Hans, zh-Hant]   # language selection: Launcher.swift/GameMenu.swift look their English keys up in Sources/<lang>.lproj/Localizable.strings
++        CFBundleDevelopmentRegion: en
+         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+         CFBundleShortVersionString: $(MARKETING_VERSION)
+         UILaunchScreen: {}
+diff --git a/docs/frontends.md b/docs/frontends.md
+index 85a1920..c626a5e 100644
+--- a/docs/frontends.md
++++ b/docs/frontends.md
+@@ -49,6 +49,8 @@ A built app carries the settings its game supports, as the iPhone app's settings
+ 
+ **Compatibility.** [launcher.schema.json](launcher.schema.json) describes the file as a JSON Schema, so a front end can check it and generate its types from it. `schema` is 1, and schema 1 grows only by optional fields: a reader ignores fields it does not know, draws sections it does not know, and a field never changes its meaning. A new `kind` would be schema 2, since a reader cannot draw a kind it does not know. A list written before the field existed has no `schema` and is 1. In `settings.tsv`, the optional fields come from the last column, `meta` (`key=value` pairs separated by `;`); a new key is added in `settings.py`'s `META`, here and in the schema together, and `test_launcher_settings.py` fails when the three disagree.
+ 
++**Language.** The iPhone app's own screens — the settings screen and the in-game menu — keep their English literals as keys and look them up in `Sources/zh-Hans.lproj/Localizable.strings` and `Sources/zh-Hant.lproj/Localizable.strings`, which `dm/ios/project.yml` declares as localizations (`CFBundleLocalizations`); a key without a translation stays English. The settings labels, notes and option names that `dm/launcher.json` carries are English too, and the app translates them through the same lookup when it draws the row, so the file stays language-neutral for every front end. The Mac app's settings window has no strings resources and stays English; a front end that shows another language draws its own window, and the Mac quit prompt keeps taking its texts from `DM_HOME_QUIT_TEXT` ([Starting a game](#starting-a-game)). A new language is one `<language>.lproj/Localizable.strings` beside the two, plus its code in `CFBundleLocalizations`.
++
+ ## Starting a game
+ 
+ **A Mac app** is started like any app, or by running its `Contents/MacOS/nxnative` with the chosen settings in its environment (`DM_FPS_TARGET=30`, …). The launcher there runs the host as a child, forwards SIGTERM, SIGINT and SIGHUP to it and exits with its exit code: 0 for a quit (⌘Q, the Home prompt, closing the window), 70 after the alert that macOS stopped running the game's GPU work ([A GPU whose access macOS revoked stops the game](reference/rendering.md#a-gpu-whose-access-macos-revoked-stops-the-game)), 134 for an abort. A variable already in the environment wins; then come `~/Library/Application Support/nxnative/<title ID>/env.txt` and the bundle's `dm/env.txt`, one `KEY=VALUE` per line ([A Mac app](development.md#a-mac-app)). The save is in `save/` in that Application Support folder; the log is `~/Library/Logs/nxnative/<title ID>.log`, the previous run's `<title ID>.prev.log`. The title ID is `DMTitleID` in the app's `Info.plist`.
